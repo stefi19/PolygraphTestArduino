@@ -1,16 +1,23 @@
-#include <WiFi.h>
-#include <WiFiAP.h>
-#include <WiFiClient.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include <Adafruit_NeoPixel.h>
 
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
 /*
- * LED on Carbond D4 - ESP32
+ * LED on Carbond D4
  */
 #define LED_PIN        12
 #define LED_ENABLE_PIN 13
 #define LED_COUNT       1
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+// make characteristic global so callbacks can notify
+BLECharacteristic *pCharacteristicGlobal = nullptr;
 
 // MESSAGE STRINGS
 const String SETUP_INIT = "SETUP: Initializing ESP32 dev board";
@@ -30,90 +37,80 @@ const char *PASS = "12345678";
 const int HTTP_PORT_NO = 80;
 
 // Server
-WiFiServer HttpServer(HTTP_PORT_NO);
+
+class LedCallback : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    String value = pCharacteristic->getValue();
+
+    value.trim();   // remove CR/LF if sent from phone app
+
+    float notifyVal = 0.0f;
+
+    if (value == "ON") {
+      strip.setPixelColor(0, strip.Color(0, 255, 0));
+      strip.show();
+      notifyVal = 1.0f;
+    } 
+    else if (value == "OFF") {
+      strip.clear();
+      strip.show();
+      notifyVal = 0.0f;
+    }
+
+    // If global characteristic is set, send a 4-byte float notification (little-endian)
+    if (pCharacteristicGlobal) {
+      uint8_t buf[4];
+      memcpy(buf, &notifyVal, sizeof(float));
+      pCharacteristicGlobal->setValue(buf, sizeof(buf));
+      pCharacteristicGlobal->notify();
+      // debug log to serial
+      Serial.print("Received write: ");
+      Serial.print(value);
+      Serial.print(" -> notified value: ");
+      Serial.println(notifyVal);
+    }
+  }
+};
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
 
-  // Init NeoPixel LED
   pinMode(LED_ENABLE_PIN, OUTPUT);
   digitalWrite(LED_ENABLE_PIN, LOW);
+
   strip.begin();
   strip.setBrightness(60);
   strip.clear();
   strip.show();
 
-  Serial.println(SETUP_INIT);
+  BLEDevice::init("ESP32_BLE_LED");
 
-  // Start AP mode
-  if (!WiFi.softAP(SSID, PASS)) {
-    Serial.println(SETUP_ERROR);
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
 
-    // RED = error
-    strip.setPixelColor(0, strip.Color(255, 0, 0));
-    strip.show();
+  BLECharacteristic *pCharacteristic =
+    pService->createCharacteristic(
+      CHARACTERISTIC_UUID,
+      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY
+    );
 
-    while (1); // stop execution
-  }
+  // keep a global ref so callbacks can notify
+  pCharacteristicGlobal = pCharacteristic;
 
-  // GREEN = AP active
-  strip.setPixelColor(0, strip.Color(0, 255, 0));
-  strip.show();
+  pCharacteristic->setCallbacks(new LedCallback());
+  pCharacteristic->addDescriptor(new BLE2902());
 
-  // Print AP info
-  IPAddress accessPointIP = WiFi.softAPIP();
-  String info = SETUP_SERVER_START + accessPointIP.toString() +
-                SETUP_SERVER_PORT + HTTP_PORT_NO;
+  pService->start();
 
-  Serial.println(info);
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->start();
 
-  // Start HTTP server
-  HttpServer.begin();
+  Serial.println("BLE server started, waiting for client...");
 }
+
 
 void loop() {
-  WiFiClient client = HttpServer.available();  // listen for incoming clients
-
-  if (client) {
-    Serial.println(INFO_NEW_CLIENT);
-
-    // BLUE = client connected
-    strip.setPixelColor(0, strip.Color(0, 0, 255));
-    strip.show();
-
-    String currentLine = "";
-
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        Serial.write(c);
-
-        if (c == '\n') {
-          if (currentLine.length() == 0) {
-            printWelcomePage(client);
-            break;
-          } else {
-            currentLine = "";
-          }
-        } else if (c != '\r') {
-          currentLine += c;
-        }
-      }
-    }
-
-    client.stop();
-    Serial.println(INFO_DISCONNECT_CLIENT);
-    Serial.println();
-
-    // back to GREEN = AP idle
-    strip.setPixelColor(0, strip.Color(0, 255, 0));
-    strip.show();
-  }
-}
-
-void printWelcomePage(WiFiClient client) {
-  client.println(HTTP_HEADER);
-  client.print(HTML_WELCOME);
-  client.println();
+  // Nothing needed here for basic BLE
 }

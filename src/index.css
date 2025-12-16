@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* small app-specific styles */
+body { @apply bg-slate-900 text-white; }
+.container { @apply max-w-4xl mx-auto p-6; }
