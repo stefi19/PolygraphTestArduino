@@ -1,8 +1,9 @@
+import EspWsDashboard from './src/EspWsDashboard';
 
-import ESP32BLEMonitor from './ESPBLE';
-
-function App() {
-  return <ESP32BLEMonitor />;
+export default function App() {
+  return (
+    <div>
+      <EspWsDashboard />
+    </div>
+  );
 }
-
-export default App;
