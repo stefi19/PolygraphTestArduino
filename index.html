@@ -1,12 +1,410 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ESP32 BLE Monitor</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polygraph Dashboard</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+      color: #eee;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-shadow: 0 0 30px rgba(0, 255, 136, 0.3);
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-bottom: 30px;
+      font-size: 0.9rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+      gap: 25px;
+      margin-bottom: 25px;
+    }
+
+    .card {
+      background: rgba(30, 30, 46, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 25px;
+      border-radius: 15px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 40px rgba(0, 255, 136, 0.2);
+    }
+
+    .card h3 {
+      margin-bottom: 15px;
+      font-size: 1.3rem;
+      color: #00ff88;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card h3::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: linear-gradient(180deg, #00ff88 0%, #00ccff 100%);
+      border-radius: 2px;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: 250px !important;
+    }
+
+    .status-card {
+      grid-column: 1 / -1;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+
+    .status-item {
+      background: rgba(20, 20, 30, 0.6);
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .status-label {
+      font-size: 0.85rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+
+    .status-value {
+      font-size: 2rem;
+      font-weight: bold;
+    }
+
+    .ok { color: #00ff88; }
+    .bad { color: #ff4444; }
+    .warn { color: #ffaa00; }
+
+    .lying-indicator {
+      background: rgba(20, 20, 30, 0.6);
+      padding: 25px;
+      border-radius: 10px;
+      text-align: center;
+      border: 2px solid rgba(255, 68, 68, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .lying-indicator::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #ff4444, #ffaa00, #ff4444);
+      background-size: 200% 100%;
+      animation: shimmer 2s linear infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 200% 0%; }
+    }
+
+    .lying-label {
+      font-size: 0.9rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+
+    .lying-percentage {
+      font-size: 3rem;
+      font-weight: bold;
+      color: #ff4444;
+      text-shadow: 0 0 20px rgba(255, 68, 68, 0.5);
+    }
+
+    .pulse {
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .connection-status {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      border-radius: 20px;
+      background: rgba(20, 20, 30, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .connection-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #00ff88;
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      
+      h1 {
+        font-size: 1.8rem;
+      }
+
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="connection-status">
+    <div class="connection-dot"></div>
+    <span>Live Monitoring</span>
+  </div>
+
+  <div class="container">
+    <h1>Polygraph Live Monitor</h1>
+    <div class="subtitle">Real-time Biometric Analysis System</div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Electrocardiogram (EKG)</h3>
+        <canvas id="ekgChart"></canvas>
+      </div>
+
+      <div class="card">
+        <h3>Galvanic Skin Response (GSR)</h3>
+        <canvas id="gsrChart"></canvas>
+      </div>
+
+      <div class="card">
+        <h3>Sound Level Analysis</h3>
+        <canvas id="soundChart"></canvas>
+      </div>
+
+      <div class="card status-card">
+        <h3>System Status</h3>
+        <div class="status-grid">
+          <div class="status-item">
+            <div class="status-label">Authentication</div>
+            <div class="status-value" id="auth">NO</div>
+          </div>
+          <div class="status-item">
+            <div class="status-label">Stress Detected</div>
+            <div class="status-value" id="stress">NO</div>
+          </div>
+          <div class="status-item lying-indicator">
+            <div class="lying-label">Deception Probability</div>
+            <div class="lying-percentage pulse" id="maybe_lying">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Socket.IO Connection - will work when server is available
+    let socket;
+    try {
+      socket = io(window.location.origin);
+      
+      socket.on('connect', () => {
+        console.log('Connected to server');
+      });
+
+      socket.on('sensor_data', (data) => {
+        // Update lying percentage
+        if (data.maybe_lying !== null && data.maybe_lying !== undefined) {
+          document.getElementById('maybe_lying').textContent = data.maybe_lying + '%';
+        } else {
+          document.getElementById('maybe_lying').textContent = '--';
+        }
+
+        // Update charts
+        if (data.ekg !== undefined) pushData(ekgChart, data.ekg);
+        if (data.gsr !== undefined) pushData(gsrChart, data.gsr);
+        if (data.sound !== undefined) pushData(soundChart, data.sound);
+
+        // Update status indicators
+        const authEl = document.getElementById('auth');
+        authEl.textContent = data.auth ? "YES" : "NO";
+        authEl.className = 'status-value ' + (data.auth ? "ok" : "bad");
+
+        const stressEl = document.getElementById('stress');
+        stressEl.textContent = data.stress ? "YES" : "NO";
+        stressEl.className = 'status-value ' + (data.stress ? "warn" : "ok");
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Disconnected from server');
+      });
+    } catch (error) {
+      console.log('Socket.IO not available - demo mode');
+      // Demo mode with simulated data
+      simulateDemoData();
+    }
+
+    const MAX_POINTS = 100;
+
+    function createChart(ctx, label, color, min = 0, max = 255) {
+      return new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: label,
+            data: [],
+            borderColor: color,
+            backgroundColor: color.replace('1)', '0.1)'),
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: {
+              display: false
+            }
+          },
+          scales: {
+            y: { 
+              min, 
+              max,
+              grid: {
+                color: 'rgba(255, 255, 255, 0.05)'
+              },
+              ticks: {
+                color: '#888'
+              }
+            },
+            x: {
+              display: false
+            }
+          }
+        }
+      });
+    }
+
+    const ekgChart = createChart(
+      document.getElementById('ekgChart'), 
+      'EKG', 
+      'rgba(0, 255, 136, 1)', 
+      0, 
+      200
+    );
+    
+    const gsrChart = createChart(
+      document.getElementById('gsrChart'), 
+      'GSR', 
+      'rgba(255, 170, 0, 1)', 
+      300, 
+      600
+    );
+    
+    const soundChart = createChart(
+      document.getElementById('soundChart'), 
+      'Sound', 
+      'rgba(0, 204, 255, 1)', 
+      0, 
+      100
+    );
+
+    function pushData(chart, value) {
+      chart.data.labels.push('');
+      chart.data.datasets[0].data.push(value);
+      if (chart.data.labels.length > MAX_POINTS) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+    }
+
+    // Demo mode simulation
+    function simulateDemoData() {
+      let t = 0;
+      setInterval(() => {
+        const ekg = 100 + Math.sin(t * 0.5) * 50 + Math.random() * 20;
+        const gsr = 350 + Math.sin(t * 0.2) * 100 + Math.random() * 50;
+        const sound = 100 + Math.sin(t * 0.3) * 60 + Math.random() * 30;
+        
+        pushData(ekgChart, ekg);
+        pushData(gsrChart, gsr);
+        pushData(soundChart, sound);
+        
+        t += 0.1;
+        
+        // Update demo status
+        document.getElementById('maybe_lying').textContent = Math.floor(45 + Math.random() * 30) + '%';
+      }, 100);
+    }
+  </script>
+</body>
 </html>
